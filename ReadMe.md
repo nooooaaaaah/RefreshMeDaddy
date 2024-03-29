@@ -47,15 +47,63 @@ Execute the compiled binary with optional flags:
 
 ### Integrating with the Client
 
-Ensure your client-side application is configured to establish a WebSocket connection to the server:
+Ensure your client-side application is configured to establish a WebSocket connection to the server you can add this as a script tag in your HTML file or use an external script file.:
 
-```javascript
-const socket = new WebSocket("ws://localhost:8080/ws");
-socket.onmessage = (message) => {
-  if (message.data === "reload") {
-    window.location.reload();
+```html
+<script type="text/javascript">
+  function setupWebSocket() {
+    var ws = new WebSocket("ws://localhost:8080/ws"); // Replace with your server's address and port
+
+    ws.onmessage = function (event) {
+      if (event.data === "reload") {
+        setTimeout(function () {
+          window.location.reload();
+        }, 1000); // Wait one second before reloading
+      }
+    };
+
+    ws.onclose = function () {
+      console.log("WebSocket closed. Attempting to reconnect...");
+      setTimeout(setupWebSocket, 1000); // Attempt to reconnect after a delay
+    };
+
+    ws.onerror = function (err) {
+      console.error("WebSocket encountered an error:", err);
+      ws.close(); // Ensure WebSocket is closed after an error
+    };
   }
-};
+
+  setupWebSocket();
+</script>
+```
+
+or
+
+```html
+<script src="path/to/live-reload.js"></script>
+```
+
+### Environment (Optional)
+
+When integrating the 'RefreshMeDaddy' live-reload server into your workflow, ensure it's only enabled in development environments. Use a flag to toggle the live-reload capability, preventing its activation in production.
+
+For example, enable the live-reload server like this:
+
+```go
+tmpl := template.Must(template.ParseFiles("path/to/base.html"))
+
+http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    dev := os.Getenv("ENV") == "development"
+    tmpl.Execute(w, map[string]interface{}{
+        "IsDevelopment": dev,
+    })
+})
+```
+
+```html
+{{ if .IsDevelopment }}
+<script src="path/to/live-reload.js"></script>
+{{ end }}
 ```
 
 ## Usage
