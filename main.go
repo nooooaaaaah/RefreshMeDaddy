@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,62 +16,21 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// serverConfig holds the configuration for the server.
-type serverConfig struct {
-	port       string                                 // Port on which the server listens
-	watchDir   string                                 // Directory to watch for changes
-	verbose    bool                                   // Enable verbose logging
-	ignoreList stringSlice                            // List of paths to ignore
-	upgrader   websocket.Upgrader                     // Upgrader for websocket connections
-	clients    map[*websocket.Conn]context.CancelFunc // Active clients and their cancel funcs
-}
-
-// stringSlice is a custom type that implements flag.Value interface for string slices.
-type stringSlice []string
-
-// String returns the string representation of the stringSlice.
-func (i *stringSlice) String() string {
-	return fmt.Sprint(*i)
-}
-
-// Set splits a comma-separated string and appends it to the slice.
-func (i *stringSlice) Set(value string) error {
-	for _, val := range strings.Split(value, ",") {
-		*i = append(*i, val)
-	}
-	return nil
-}
-
-// init attempts to load environment variables from a .env file.
-func init() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found")
-	}
-}
-
-// main sets up the server configuration, starts the file watcher and the web server.
-func main() {
-	// Configuration and flag parsing
-	var cfg serverConfig
-	// Server configuration flags
-	flag.StringVar(&cfg.port, "port", "8080", "port to run the WebSocket server on")
-	flag.StringVar(&cfg.port, "p", "8080", "port to run the WebSocket server on (shorthand)")
-	flag.StringVar(&cfg.watchDir, "watch", ".", "directory to watch for changes")
-	flag.StringVar(&cfg.watchDir, "w", ".", "directory to watch for changes (shorthand)")
-	flag.BoolVar(&cfg.verbose, "verbose", false, "enable verbose logging")
-	flag.BoolVar(&cfg.verbose, "v", false, "enable verbose logging (shorthand)")
-	flag.Var(&cfg.ignoreList, "ignore", "comma-separated list of directories or files to ignore")
-	flag.Var(&cfg.ignoreList, "i", "comma-separated list of directories or files to ignore (shorthand)")
-	flag.Parse()
-
-	// Initialize clients map and upgrader configuration
-	cfg.clients = make(map[*websocket.Conn]context.CancelFunc)
-	cfg.upgrader = websocket.Upgrader{
+var (
+	port     string
+	watch    string
+	verbose  bool
+	upgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		// CheckOrigin verifies the origin of the request
 		CheckOrigin: func(r *http.Request) bool {
+			if err := godotenv.Load(); err != nil {
+				log.Println("No .env file found")
+			}
 			allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
+			if len(allowedOrigins) == 1 && allowedOrigins[0] == "" {
+				log.Fatal("Environment variable ALLOWED_ORIGINS is not set or empty")
+			}
 			origin := r.Header.Get("Origin")
 			for _, allowedOrigin := range allowedOrigins {
 				if origin == allowedOrigin {
@@ -82,32 +40,40 @@ func main() {
 			return false
 		},
 	}
+	clients = make(map[*websocket.Conn]context.CancelFunc) // connected clients with cancel funcs
+)
 
-	// Setup signal handling for graceful shutdown
+func init() {
+	flag.StringVar(&port, "port", "8080", "port to run the WebSocket server on (shorthand: -p)")
+	flag.StringVar(&port, "p", "8080", "port to run the WebSocket server on (shorthand)")
+	flag.StringVar(&watch, "watch", ".", "directory to watch for changes (shorthand: -w)")
+	flag.StringVar(&watch, "w", ".", "directory to watch for changes (shorthand)")
+	flag.BoolVar(&verbose, "verbose", false, "enable verbose logging (shorthand: -v)")
+	flag.BoolVar(&verbose, "v", false, "enable verbose logging (shorthand)")
+	flag.Parse()
+}
+
+func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// WebSocket handler
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(&cfg, w, r)
-	})
-	// Start watching files in a separate goroutine
-	go watchFiles(&cfg, ctx)
+	http.HandleFunc("/ws", serveWs)
+	go watchFiles(ctx, watch)
 
-	// Server startup logs
-	if cfg.verbose {
+	if verbose {
 		log.Printf("Verbose logging enabled\n")
 	}
-	log.Printf("Starting live-reload server on :%s\n", cfg.port)
-	server := &http.Server{Addr: ":" + cfg.port}
+	log.Printf("Starting live-reload server on :%s\n", port)
+	server := &http.Server{Addr: ":" + port}
 	go func() {
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("ListenAndServe(): %v", err)
 		}
 	}()
 
-	<-ctx.Done() // Wait for interrupt signal to gracefully shutdown
+	<-ctx.Done() // Wait for interrupt signal
 
+	stop()
 	log.Println("Shutting down server...")
 	if err := server.Shutdown(context.Background()); err != nil {
 		log.Fatalf("Server Shutdown Failed:%+v", err)
@@ -115,27 +81,24 @@ func main() {
 	log.Println("Server gracefully stopped")
 }
 
-// serveWs handles incoming WebSocket connections.
-func serveWs(cfg *serverConfig, w http.ResponseWriter, r *http.Request) {
-	// Upgrade HTTP server connection to a WebSocket connection
-	conn, err := cfg.upgrader.Upgrade(w, r, nil)
+func serveWs(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
+		log.Println("WebSocket upgrade error:", err)
 		return
 	}
-	if cfg.verbose {
+	if verbose {
 		log.Println("WebSocket connection established")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cfg.clients[conn] = cancel
+	clients[conn] = cancel
 
-	// Listen for messages on the WebSocket connection
 	go func() {
 		defer func() {
 			conn.Close()
-			delete(cfg.clients, conn)
+			delete(clients, conn)
 			cancel()
-			if cfg.verbose {
+			if verbose {
 				log.Println("WebSocket connection closed")
 			}
 		}()
@@ -146,8 +109,8 @@ func serveWs(cfg *serverConfig, w http.ResponseWriter, r *http.Request) {
 				return
 			default:
 				if _, _, err := conn.NextReader(); err != nil {
-					if cfg.verbose {
-						log.Printf("WebSocket read error: %v", err)
+					if verbose {
+						log.Println("WebSocket read error:", err)
 					}
 					return
 				}
@@ -156,23 +119,16 @@ func serveWs(cfg *serverConfig, w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// watchFiles watches for file changes in the specified directory and notifies connected clients.
-func watchFiles(cfg *serverConfig, ctx context.Context) {
+func watchFiles(ctx context.Context, directory string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Fatalf("Failed to create watcher: %v", err)
+		log.Fatal("Failed to create watcher:", err)
 	}
 	defer watcher.Close()
 
-	// addDir recursively adds directories to the watcher, ignoring specified paths
+	// Function to recursively add directories to the watcher
 	var addDir func(dir string) error
 	addDir = func(dir string) error {
-		if shouldIgnore(cfg, dir) {
-			if cfg.verbose {
-				log.Printf("Ignoring directory: %s\n", dir)
-			}
-			return nil
-		}
 		contents, err := os.ReadDir(dir)
 		if err != nil {
 			return err
@@ -183,7 +139,7 @@ func watchFiles(cfg *serverConfig, ctx context.Context) {
 				if err := watcher.Add(path); err != nil {
 					return err
 				}
-				if cfg.verbose {
+				if verbose {
 					log.Printf("Watching directory: %s\n", path)
 				}
 				if err := addDir(path); err != nil {
@@ -194,11 +150,10 @@ func watchFiles(cfg *serverConfig, ctx context.Context) {
 		return nil
 	}
 
-	if err := addDir(cfg.watchDir); err != nil {
-		log.Fatalf("Failed to add directory to watcher: %v", err)
+	if err := addDir(directory); err != nil {
+		log.Fatal("Failed to add directory to watcher:", err)
 	}
 
-	// Listen for file change events and errors
 	for {
 		select {
 		case <-ctx.Done():
@@ -207,14 +162,13 @@ func watchFiles(cfg *serverConfig, ctx context.Context) {
 			if !ok {
 				return
 			}
-			if cfg.verbose {
+			if verbose {
 				log.Println("Detected change:", event)
 			}
-			// Notify all connected clients to reload
-			for client, cancel := range cfg.clients {
+			for client, cancel := range clients {
 				err := client.WriteMessage(websocket.TextMessage, []byte("reload"))
 				if err != nil {
-					log.Printf("Error sending reload message: %v", err)
+					log.Println("Error sending reload message:", err)
 					cancel() // Cancel context on error
 				}
 			}
@@ -222,17 +176,7 @@ func watchFiles(cfg *serverConfig, ctx context.Context) {
 			if !ok {
 				return
 			}
-			log.Printf("Watcher error: %v", err)
+			log.Println("Watcher error:", err)
 		}
 	}
-}
-
-// shouldIgnore checks if a path should be ignored based on the server configuration.
-func shouldIgnore(cfg *serverConfig, path string) bool {
-	for _, ignore := range cfg.ignoreList {
-		if ignore == path {
-			return true
-		}
-	}
-	return false
 }
