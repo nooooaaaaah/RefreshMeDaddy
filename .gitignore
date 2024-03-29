@@ -1,0 +1,30 @@
+# Binaries
+/RefreshMeDaddy
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Go specific
+*.out
+*.test
+*.exe
+
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*~
+
+# Private source or config files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
