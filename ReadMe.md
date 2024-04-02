@@ -52,7 +52,7 @@ Ensure your client-side application is configured to establish a WebSocket conne
 ```html
 <script type="text/javascript">
   function setupWebSocket() {
-    var ws = new WebSocket("ws://localhost:8080/ws"); // Replace with your server's address and port
+    var ws = new WebSocket("ws://localhost:8080/refreshMeDaddy"); // Replace with your server's address and port
 
     ws.onmessage = function (event) {
       if (event.data === "reload") {

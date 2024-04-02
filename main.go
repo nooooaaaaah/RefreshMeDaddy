@@ -88,7 +88,7 @@ func main() {
 	defer stop()
 
 	// WebSocket handler
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/refreshMeDaddy", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(&cfg, w, r)
 	})
 	// Start watching files in a separate goroutine
