@@ -1,4 +1,4 @@
-module RefreshMeDaddy
+module github.com/nooooaaaaah/RefreshMeDaddy
 
 go 1.22.1
 
