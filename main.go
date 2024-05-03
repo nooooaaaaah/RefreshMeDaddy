@@ -72,14 +72,7 @@ func main() {
 		WriteBufferSize: 1024,
 		// CheckOrigin verifies the origin of the request
 		CheckOrigin: func(r *http.Request) bool {
-			allowedOrigins := strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",")
-			origin := r.Header.Get("Origin")
-			for _, allowedOrigin := range allowedOrigins {
-				if origin == allowedOrigin {
-					return true
-				}
-			}
-			return false
+			return true
 		},
 	}
 
